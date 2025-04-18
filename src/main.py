@@ -1,7 +1,7 @@
+import re
 import sys
 import requests
 import os
-import uuid
 
 def open_file(file_path):
     with open(file_path, 'r') as file:
@@ -9,18 +9,18 @@ def open_file(file_path):
 
 def build_prompt(fileContent):
     return f"""
-    Reestruture o conteúdo abaixo para que ele sirva como base de conhecimento clara e objetiva, adequada para ser processada por uma LLM em tarefas de recuperação de contexto (RAG).
+Reestruture o conteúdo a seguir para que atenda aos requisitos de uma base de conhecimento clara, objetiva e adequada ao processamento por modelos de linguagem (LLMs) em tarefas de recuperação de informações via RAG (Retrieval-Augmented Generation).
 
-    Responda em pt-BR (português do Brasil).
+Responda em pt-BR (português do Brasil).
 
-    Organize o texto em seções hierárquicas, remova elementos irrelevantes para machine reading (como links e formatação decorativa) e priorize clareza, consistência e padronização de termos.
+Organize o conteúdo em seções hierárquicas, elimine elementos irrelevantes para leitura automatizada (como links, comentários e formatações decorativas) e priorize a clareza, a padronização terminológica e a consistência estrutural.
 
-    O objetivo é facilitar a compreensão e extração de informações por LLMs.
+O objetivo é maximizar a eficiência na extração e compreensão de informações por LLMs.
 
-    Mantenha detalheas técnicos importantes. Retorne somente o texto estruturado, sem comentários adicionais.
+Preserve todos os detalhes técnicos relevantes. Retorne exclusivamente o conteúdo reestruturado, sem quaisquer comentários adicionais.
 
-    {fileContent}
-    """
+{fileContent}
+"""
 
 def chat_with_model(token, prompt, model, temperature):
     url = 'http://localhost:3000/api/chat/completions'
@@ -47,27 +47,39 @@ def save_result_to_file(file_name, content):
     file.write(content)
 
 if __name__ == "__main__":
+    MIN_LINES_OF_CONTENT = 15
+    MODEL = 'deepseek-r1:8b'
+    TEMPERATURE = 0.1
+
     token = sys.argv[1]
     docs_path = sys.argv[2]
-    model = 'codellama:latest'
-    temperature = 0.2
-    print(f">> Running model \"{model}\" on path \"{docs_path}\" with temperature \"{temperature}\"")
+
+    print(f">> Running model \"{MODEL}\" on path \"{docs_path}\" with temperature \"{TEMPERATURE}\"")
 
     for root, dirs, files in os.walk(docs_path):
       for file in files:
         file_path = os.path.join(root, file)
         if not file.endswith('.md'):
+            print(f"[!!!] Skipping file {file_path} as it is not a Markdown file.")
+            continue
+        file = open_file(file_path)
+        if file.splitlines().__len__() < MIN_LINES_OF_CONTENT:
+            print(f"[!!!] Skipping file {file_path} as it has less than {MIN_LINES_OF_CONTENT} lines.")
             continue
         print(f"""
 =============================================
-Processing file: {file_path}
-=============================================
-""")
-        prompt = build_prompt(open_file(file_path))
-        response = chat_with_model(token, prompt, model, temperature)
+>>> Input: {file_path}""")
+        prompt = build_prompt(file)
+        response = chat_with_model(token, prompt, MODEL, TEMPERATURE)
         content = response['choices'][0]['message']['content']
+
+        content = re.sub(r"<think>.*?</think>", "", content, flags=re.DOTALL).strip()
+
         if 'error' in response:
             print(f"Error processing file {file_path}: {response['error']}")
             continue
         new_file_name = file_path.split('rd-documentation/pages/')[1].replace('/', '-').replace('default.md', '') + '.md'
-        save_result_to_file(f'./output/{new_file_name}', content)
+        output_file_name = f'./output/{new_file_name}'
+        save_result_to_file(output_file_name, content)
+        print(f"""<<< Output: {output_file_name}
+=============================================""")
