@@ -9,20 +9,43 @@ def open_file(file_path):
 
 def build_prompt(fileContent):
     return f"""
-Reestruture o conteúdo a seguir para que atenda aos requisitos de uma base de conhecimento clara, objetiva e adequada ao processamento por modelos de linguagem (LLMs) em tarefas de recuperação de informações via RAG (Retrieval-Augmented Generation).
+Reestruture o conteúdo a seguir para que ele seja adequado ao uso como base de conhecimento em sistemas de recuperação aumentada por geração (RAG – Retrieval-Augmented Generation), com foco em máxima eficiência na extração de informações por modelos de linguagem (LLMs).
 
 Responda em pt-BR (português do Brasil).
 
-Organize o conteúdo em seções hierárquicas, elimine elementos irrelevantes para leitura automatizada (como links, comentários e formatações decorativas) e priorize a clareza, a padronização terminológica e a consistência estrutural.
+## Objetivos:
+Tornar o conteúdo mais acessível e preciso para respostas automáticas baseadas em contexto.
 
-O objetivo é maximizar a eficiência na extração e compreensão de informações por LLMs.
+Permitir que partes isoladas do texto contenham informações completas e autossuficientes, sem depender de outras seções para fazer sentido.
 
-Preserve todos os detalhes técnicos relevantes. Retorne exclusivamente o conteúdo reestruturado, sem quaisquer comentários adicionais.
+## Instruções:
+
+- Reorganize o conteúdo com títulos claros e hierárquicos, utilizando seções e subseções que representem os conceitos descritos.
+
+- Explique todos os termos técnicos com clareza e contexto, mesmo que isso repita parte da explicação em seções diferentes.
+
+- Use bullets, listas numeradas e enumerações sempre que houver agrupamentos de informações.
+
+- Inclua sinônimos ou variações terminológicas relevantes próximos a cada conceito importante (ex: “Traces (rastros)” ou “Serviços (também chamados de ‘Services’)”).
+
+- Torne todas as informações explícitas e autoexplicativas, evitando dependência de links, imagens ou contexto externo.
+
+- Remova elementos desnecessários para leitura automatizada, como comentários, links não informativos, formatação visual (linhas decorativas, divisores, etc).
+
+- Priorize clareza, consistência e padronização do vocabulário técnico ao longo de todo o conteúdo.
+
+- Elimine introduções vagas ou frases genéricas que não agreguem à recuperação da informação.
+
+Importante: Se alguma informação estiver ausente ou se não houver dados suficientes para responder a uma pergunta de forma precisa, isso deve ser declarado explicitamente. Não faça suposições ou inferências além do conteúdo fornecido.
+
+## Saída esperada:
+
+Apenas o conteúdo reestruturado, organizado e limpo, pronto para ser indexado em um sistema de RAG.
 
 {fileContent}
 """
 
-def chat_with_model(token, prompt, model, temperature):
+def chat_with_model(token, prompt, model, temperature, top_p):
     url = 'http://localhost:3000/api/chat/completions'
     headers = {
         'Authorization': f'Bearer {token}',
@@ -31,6 +54,7 @@ def chat_with_model(token, prompt, model, temperature):
     data = {
       "model": model,
       "temperature": temperature,
+      "top_p": top_p,
       "messages": [
         {
           "role": "user",
@@ -46,31 +70,45 @@ def save_result_to_file(file_name, content):
   with open(file_name, 'w') as file:
     file.write(content)
 
-if __name__ == "__main__":
+def get_files_in_directory(directory):
     MIN_LINES_OF_CONTENT = 15
+    files = []
+    for root, _, filenames in os.walk(directory):
+        for filename in filenames:
+            if not filename.endswith('.md'):
+                continue
+            file_path = os.path.join(root, filename)
+            with open(file_path, 'r') as file:
+                lines = file.readlines()
+                if len(lines) < MIN_LINES_OF_CONTENT:
+                    continue
+            if os.path.isfile(file_path):
+                files.append(file_path)
+    return files
+
+if __name__ == "__main__":
     MODEL = 'deepseek-r1:8b'
     TEMPERATURE = 0.1
+    TOP_P = 0.1
 
     token = sys.argv[1]
     docs_path = sys.argv[2]
 
     print(f">> Running model \"{MODEL}\" on path \"{docs_path}\" with temperature \"{TEMPERATURE}\"")
 
-    for root, dirs, files in os.walk(docs_path):
-      for file in files:
-        file_path = os.path.join(root, file)
-        if not file.endswith('.md'):
-            print(f"[!!!] Skipping file {file_path} as it is not a Markdown file.")
-            continue
-        file = open_file(file_path)
-        if file.splitlines().__len__() < MIN_LINES_OF_CONTENT:
-            print(f"[!!!] Skipping file {file_path} as it has less than {MIN_LINES_OF_CONTENT} lines.")
-            continue
-        print(f"""
-=============================================
->>> Input: {file_path}""")
-        prompt = build_prompt(file)
-        response = chat_with_model(token, prompt, MODEL, TEMPERATURE)
+    files_to_process = get_files_in_directory(docs_path)
+    if not files_to_process:
+        print(f"[!!!] No files found in the directory {docs_path}.")
+        sys.exit(1)
+    total_files = len(files_to_process)
+    print(f"[INFO] Found {total_files} files in the directory {docs_path}.")
+    files_processed = 0
+
+    for file_path in files_to_process:
+        print(f">>> [INPUT] {file_path}")
+        file_content = open_file(file_path)
+        prompt = build_prompt(file_content)
+        response = chat_with_model(token, prompt, MODEL, TEMPERATURE, TOP_P)
         content = response['choices'][0]['message']['content']
 
         content = re.sub(r"<think>.*?</think>", "", content, flags=re.DOTALL).strip()
@@ -81,5 +119,8 @@ if __name__ == "__main__":
         new_file_name = file_path.split('rd-documentation/pages/')[1].replace('/', '-').replace('default.md', '') + '.md'
         output_file_name = f'./output/{new_file_name}'
         save_result_to_file(output_file_name, content)
-        print(f"""<<< Output: {output_file_name}
+        files_processed += 1
+        percentage = (files_processed / total_files) * 100
+        print(f"""<<< [OUTPUT]: {output_file_name}
+[INFO] Processed {files_processed}/{total_files} files ({percentage:.2f}%)
 =============================================""")
